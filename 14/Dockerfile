@@ -1,5 +1,4 @@
 FROM debian:buster-slim
-MAINTAINER Odoo S.A. <info@odoo.com>
 
 SHELL ["/bin/bash", "-xo", "pipefail", "-c"]
 
