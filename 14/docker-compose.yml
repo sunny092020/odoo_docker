@@ -1,0 +1,20 @@
+version: '3.3'
+services:
+
+  postgres:
+    image: postgres:9.5
+    environment:
+      - POSTGRES_USER=odoo
+      - POSTGRES_PASSWORD=odoo
+
+  odoo:
+    image: odoo
+    command: start
+    ports:
+      - 127.0.0.1:8069:8069
+    links:
+      - postgres:db
+    environment:
+      - ODOO_ADMIN_PASSWD=odoo
+      - ODOO_DB_USER=odoo
+      - ODOO_DB_PASSWORD=odoo

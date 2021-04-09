@@ -1,87 +1,101 @@
-FROM debian:buster-slim
+FROM ubuntu:20.04
 
-SHELL ["/bin/bash", "-xo", "pipefail", "-c"]
+# Define build constants
+ENV PYTHON_BIN=python3 \
+  SERVICE_BIN=odoo-bin
 
-# Generate locale C.UTF-8 for postgres and general locale data
-ENV LANG C.UTF-8
+# Set timezone to UTC
+RUN ln -sf /usr/share/zoneinfo/Etc/UTC /etc/localtime
 
-# Install some deps, lessc and less-plugin-clean-css, and wkhtmltopdf
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        ca-certificates \
-        curl \
-        dirmngr \
-        fonts-noto-cjk \
-        gnupg \
-        libssl-dev \
-        node-less \
-        npm \
-        python3-num2words \
-        python3-pdfminer \
-        python3-pip \
-        python3-phonenumbers \
-        python3-pyldap \
-        python3-qrcode \
-        python3-renderpm \
-        python3-setuptools \
-        python3-slugify \
-        python3-vobject \
-        python3-watchdog \
-        python3-xlrd \
-        python3-xlwt \
-        xz-utils \
-    && curl -o wkhtmltox.deb -sSL https://github.com/wkhtmltopdf/wkhtmltopdf/releases/download/0.12.5/wkhtmltox_0.12.5-1.buster_amd64.deb \
-    && echo 'ea8277df4297afc507c61122f3c349af142f31e5 wkhtmltox.deb' | sha1sum -c - \
-    && apt-get install -y --no-install-recommends ./wkhtmltox.deb \
-    && rm -rf /var/lib/apt/lists/* wkhtmltox.deb
+# Generate locales
+RUN apt update \
+  && apt -yq install locales \
+  && locale-gen en_US.UTF-8 \
+  && update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
 
-# install latest postgresql-client
-RUN echo 'deb http://apt.postgresql.org/pub/repos/apt/ buster-pgdg main' > /etc/apt/sources.list.d/pgdg.list \
-    && GNUPGHOME="$(mktemp -d)" \
-    && export GNUPGHOME \
-    && repokey='B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8' \
-    && gpg --batch --keyserver keyserver.ubuntu.com --recv-keys "${repokey}" \
-    && gpg --batch --armor --export "${repokey}" > /etc/apt/trusted.gpg.d/pgdg.gpg.asc \
-    && gpgconf --kill all \
-    && rm -rf "$GNUPGHOME" \
-    && apt-get update  \
-    && apt-get install --no-install-recommends -y postgresql-client \
-    && rm -f /etc/apt/sources.list.d/pgdg.list \
-    && rm -rf /var/lib/apt/lists/*
+# Install APT dependencies
+ADD sources/apt.txt /opt/sources/apt.txt
+RUN apt update \
+  && awk '! /^ *(#|$)/' /opt/sources/apt.txt | xargs -r apt install -yq
 
-# Install rtlcss (on Debian buster)
-RUN npm install -g rtlcss
+# Create the odoo user
+RUN useradd --create-home --home-dir /opt/odoo --no-log-init odoo
 
-# Install Odoo
-ENV ODOO_VERSION 14.0
-ARG ODOO_RELEASE=20210407
-ARG ODOO_SHA=aff621cdd7e1ee2e27769d26356954cc8d143be1
-RUN curl -o odoo.deb -sSL http://nightly.odoo.com/${ODOO_VERSION}/nightly/deb/odoo_${ODOO_VERSION}.${ODOO_RELEASE}_all.deb \
-    && echo "${ODOO_SHA} odoo.deb" | sha1sum -c - \
-    && apt-get update \
-    && apt-get -y install --no-install-recommends ./odoo.deb \
-    && rm -rf /var/lib/apt/lists/* odoo.deb
-
-# Copy entrypoint script and Odoo configuration file
-COPY ./entrypoint.sh /
-COPY ./odoo.conf /etc/odoo/
-
-# Set permissions and Mount /var/lib/odoo to allow restoring filestore and /mnt/extra-addons for users addons
-RUN chown odoo /etc/odoo/odoo.conf \
-    && mkdir -p /mnt/extra-addons \
-    && chown -R odoo /mnt/extra-addons
-VOLUME ["/var/lib/odoo", "/mnt/extra-addons"]
-
-# Expose Odoo services
-EXPOSE 8069 8071 8072
-
-# Set the default config file
-ENV ODOO_RC /etc/odoo/odoo.conf
-
-COPY wait-for-psql.py /usr/local/bin/wait-for-psql.py
-
-# Set default user when running the container
+# Switch to user odoo to create the folders mapped with volumes, else the
+# corresponding folders will be created by root on the host
 USER odoo
 
-ENTRYPOINT ["/entrypoint.sh"]
-CMD ["odoo"]
+# If the folders are created with "RUN mkdir" command, they will belong to root
+# instead of odoo! Hence the "RUN /bin/bash -c" trick.
+RUN /bin/bash -c "mkdir -p /opt/odoo/{etc,sources/odoo,additional_addons,data,ssh}"
+
+# Add Odoo sources and remove .git folder in order to reduce image size
+WORKDIR /opt/odoo/sources
+
+COPY odoo.tar.gz .
+
+RUN tar xzvf odoo.tar.gz
+
+ADD sources/odoo.conf /opt/odoo/etc/odoo.conf
+
+User 0
+
+# Install Odoo python dependencies
+RUN pip3 install -r /opt/odoo/sources/odoo/requirements.txt
+
+# Install extra python dependencies
+ADD sources/pip.txt /opt/sources/pip.txt
+RUN pip3 install -r /opt/sources/pip.txt
+
+# Install wkhtmltopdf based on QT5
+ADD https://github.com/wkhtmltopdf/wkhtmltopdf/releases/download/0.12.5/wkhtmltox_0.12.5-1.focal_amd64.deb \
+  /opt/sources/wkhtmltox.deb
+RUN apt update \
+  && apt install -yq xfonts-base xfonts-75dpi \
+  && dpkg -i /opt/sources/wkhtmltox.deb
+
+# Install postgresql-client
+RUN apt update && apt install -yq lsb-release
+RUN curl https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+RUN sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+RUN apt update && apt install -yq postgresql-client
+
+# Startup script for custom setup
+ADD sources/startup.sh /opt/scripts/startup.sh
+
+# Provide read/write access to odoo group (for host user mapping). This command
+# must run before creating the volumes since they become readonly until the
+# container is started.
+RUN chmod -R 775 /opt/odoo && chown -R odoo:odoo /opt/odoo
+
+VOLUME [ \
+  "/opt/odoo/etc", \
+  "/opt/odoo/additional_addons", \
+  "/opt/odoo/data", \
+  "/opt/odoo/ssh", \
+  "/opt/scripts" \
+]
+
+# Use README for the help & man commands
+ADD README.md /usr/share/man/man.txt
+# Remove anchors and links to anchors to improve readability
+RUN sed -i '/^<a name=/ d' /usr/share/man/man.txt
+RUN sed -i -e 's/\[\^\]\[toc\]//g' /usr/share/man/man.txt
+RUN sed -i -e 's/\(\[.*\]\)(#.*)/\1/g' /usr/share/man/man.txt
+# For help command, only keep the "Usage" section
+RUN from=$( awk '/^## Usage/{ print NR; exit }' /usr/share/man/man.txt ) && \
+  from=$(expr $from + 1) && \
+  to=$( awk '/^    \$ docker-compose up/{ print NR; exit }' /usr/share/man/man.txt ) && \
+  head -n $to /usr/share/man/man.txt | \
+  tail -n +$from | \
+  tee /usr/share/man/help.txt > /dev/null
+
+# Use dumb-init as init system to launch the boot script
+ADD https://github.com/Yelp/dumb-init/releases/download/v1.2.0/dumb-init_1.2.0_amd64.deb /opt/sources/dumb-init.deb
+RUN dpkg -i /opt/sources/dumb-init.deb
+ADD bin/boot /usr/bin/boot
+ENTRYPOINT [ "/usr/bin/dumb-init", "/usr/bin/boot" ]
+CMD [ "help" ]
+
+# Expose the odoo ports (for linked containers)
+EXPOSE 8069 8072
