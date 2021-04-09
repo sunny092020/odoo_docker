@@ -3,7 +3,7 @@
 docker exec \
   --interactive \
   --tty \
-  odoo-docker_odoo_1 \
+  14_odoo_1 \
   /opt/odoo/sources/odoo/odoo-bin \
     -i base \
     --stop-after-init \
