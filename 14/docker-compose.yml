@@ -11,7 +11,8 @@ services:
     build: .
     command: start
     ports:
-      - 127.0.0.1:8069:8069
+      - '80:8069'
+      - '443:8071'
     links:
       - postgres:db
     environment:
