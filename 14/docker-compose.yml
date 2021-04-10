@@ -8,7 +8,7 @@ services:
       - POSTGRES_PASSWORD=odoo
 
   odoo:
-    image: odoo
+    build: .
     command: start
     ports:
       - 127.0.0.1:8069:8069

@@ -32,9 +32,7 @@ RUN /bin/bash -c "mkdir -p /opt/odoo/{etc,sources/odoo,additional_addons,data,ss
 # Add Odoo sources and remove .git folder in order to reduce image size
 WORKDIR /opt/odoo/sources
 
-COPY odoo.tar.gz .
-
-RUN tar xzvf odoo.tar.gz
+ADD odoo /opt/odoo/sources/odoo
 
 ADD sources/odoo.conf /opt/odoo/etc/odoo.conf
 
