@@ -78,6 +78,11 @@ VOLUME [ \
 ADD https://github.com/Yelp/dumb-init/releases/download/v1.2.0/dumb-init_1.2.0_amd64.deb /opt/sources/dumb-init.deb
 RUN dpkg -i /opt/sources/dumb-init.deb
 ADD bin/boot /usr/bin/boot
+
+
+WORKDIR /opt/odoo/sources
+ADD odoo /opt/odoo/sources/odoo
+
 ENTRYPOINT [ "/usr/bin/dumb-init", "/usr/bin/boot" ]
 CMD [ "help" ]
 
